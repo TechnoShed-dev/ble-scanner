@@ -1,10 +1,12 @@
 # ---------------------------------------------------------------------------------------
-# PROJECT: ZIGGY CORE LOGIC (V4.1.1 - UNIFIED CODEBASE)
-VERSION='4.1.1'
+# PROJECT: ZIGGY CORE LOGIC (V4.1.2 - UNIFIED CODEBASE)
+VERSION='4.1.2'
 # HARDWARE: Abstraction Layer. Designed for Pico W (Tactical/Mini).
 # ---------------------------------------------------------------------------------------
 #
 # === CHANGELOG & VERSION NOTES ===
+# V4.1.2: ADDED: Client id and secret for upload
+#         Changed upload protocol from http to https
 # V4.1.1: NEW METRIC: Added Devices Per Minute (DPM) tracking to the BLE scan status
 #         line for operational efficiency metrics.
 # V4.1.0: CODEBASE UNIFICATION: Finalized separation of credentials and hardware interface.
@@ -13,7 +15,7 @@ VERSION='4.1.1'
 
 # --- IMPORTS ---
 # 1. Secured Credentials (NOT in GitHub)
-from config_credentials import KNOWN_NETWORKS, FTP_HOST, FTP_PORT 
+from config_credentials import KNOWN_NETWORKS, FTP_HOST, FTP_PORT, CF_CLIENT_ID, CF_CLIENT_SECRET
 # 2. Hardware Interface (Device-specific Functions)
 from hardware_interface import notify, check_manual_button, set_tactical_display, DEVICE_TYPE 
 
@@ -43,16 +45,16 @@ DEVICE_NAME = f"ZIGGY_{DEVICE_TYPE}_01"
 BLE_SCAN_DURATION = 5000     
 LOOP_INTERVAL_S = 1          
 UPLOAD_INTERVAL_S = 600    # Back to 10 minutes      
-MAX_FILE_SIZE_BYTES = 38 * 1024 
+MAX_FILE_SIZE_BYTES = 32 * 1024 # reduced to 32 Kb
 MAX_CHUNKS_PER_UPLOAD = 10      
 STORAGE_CRITICAL_PCT = 0.80    
-STORAGE_RESUME_PCT = 0.20      
+STORAGE_RESUME_PCT = 0.30      
 LOG_DIR = "/logs"
 
 # --- GLOBAL STATE ---
 log_indices = {"ble": 0, "wifi": 0} 
 last_upload_time = 0.0 
-VERSION='4.1.1' 
+ 
 
 # ==============================================================================
 # --- CRITICAL UTILITY FUNCTIONS ---
@@ -366,13 +368,21 @@ async def run_upload_cycle(critical=False):
             break
 
         if not content: continue 
-
+        
+        # Prepare Headers
+        headers = {
+            'Content-Type': 'text/csv',
+            'X-Pico-Device': f"{DEVICE_NAME}_{f}",
+            'CF-Access-Client-Id': CF_CLIENT_ID,
+            'CF-Access-Client-Secret': CF_CLIENT_SECRET,
+            'User-Agent': 'Ziggy-Scanner/4.1'  # <--- CRITICAL MISSING LINE
+        }
         # POST Request
         try:
             full_payload = "datetime_utc,addr,id,rssi,chan,sec,dev\n" + content
             r = requests.post(
-                f"http://{FTP_HOST}:{FTP_PORT}/upload_log",
-                headers={'Content-Type': 'text/csv', 'X-Pico-Device': f"{DEVICE_NAME}_{f}"},
+                f"https://{FTP_HOST}/upload_log",
+                headers=headers,
                 data=full_payload
             )
             if r.status_code == 200:
@@ -383,17 +393,20 @@ async def run_upload_cycle(critical=False):
                 notify('ERROR', f"Server Error {r.status_code}") 
                 success = False
             r.close()
-        except:
-            set_unified_status("FAIL", "HTTP Timeout", "RETRY", 0)
-            notify('ERROR', "HTTP Post Timeout") 
+        except Exception as e:
+            # PRINT THE REAL ERROR TO CONSOLE
+            sys.print_exception(e)  # <--- NEW: Tells us if it's Memory or Network
+            
+            set_unified_status("FAIL", "Upload Fail", "RETRY", 0)
+            notify('ERROR', "Upload Failed") 
             success = False
         
         if not success: break
         
-    set_unified_status("SCAN", "Upload Complete", "Resume Scan", 0)
+    set_unified_status("SCAN", "Upload OK", "Resume Scan", 0)
 
     wlan.active(False) 
-    notify('OFF', "Wi-Fi Deactivated") 
+    notify('OFF', "Wi-Fi Off") 
     return success
 
 # --- INPUT MONITOR & MISSION CONTROL ---
@@ -404,7 +417,7 @@ async def input_monitor_task():
 
     while True:
         if check_manual_button():
-            set_unified_status("MANUAL", "Manual Upload", "UPLOADING", 0)
+            set_unified_status("MANUAL", "Upload", "UPLOADING", 0)
             await run_upload_cycle(critical=True)
             last_upload_time = utime.time() 
             
@@ -425,7 +438,7 @@ async def mission_control():
             
             while get_storage_stats() > STORAGE_RESUME_PCT:
                 await run_upload_cycle(critical=True)
-                await asyncio.sleep(30)
+                await asyncio.sleep(10)
             
             notify('OFF', "Storage Trap Cleared") 
         
