@@ -28,11 +28,13 @@ This project uses "Ziggy" nodes (Raspberry Pi Pico W) to capture Bluetooth Low E
 
 🚀 Quick Start
 
-1. The Hardware (Pico W)
-
-    Copy the contents of the firmware/ folder to your Pico W.
-
-    Important: You must manually create firmware/config_credentials.py with your WiFi SSID/Password (see main.py for variable names).
+### 1. The Hardware (Pico W)
+1. Copy the contents of the `firmware/` folder to your Pico W.
+2. **Configuration:**
+   * Locate `firmware/config_credentials.example.py`.
+   * Rename it to `config_credentials.py`.
+   * Open it and enter your Wi-Fi credentials and Cloudflare Service Tokens.
+   * *Note: `config_credentials.py` is ignored by Git to protect your secrets.*
 
 2. The Backend (Pi 5)
 
