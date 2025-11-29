@@ -17,7 +17,7 @@ echo "--- Starting Consolidation Loop (every 300s) ---"
 while true; do 
   echo "--- Running Consolidation Script ---"
   python /app/consolidator.py
-  sleep 300
+  sleep 150
 done
 
 # Wait command is not strictly needed here since the while loop is foreground, 

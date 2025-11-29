@@ -23,8 +23,8 @@ ONBOARD_LED_PIN = 'LED' # Standard Pico W Onboard LED
 # --- NEOPIXEL CONFIG (Colors for Notifier) ---
 COLOR_OFF = (0, 0, 0)
 COLOR_ERROR = (255, 0, 0)      # RED
-COLOR_SAVE = (0, 255, 0)       # GREEN
-COLOR_UPLOAD = (255, 165, 0)   # YELLOW/ORANGE
+COLOR_SAVE = (0, 30, 0)       # GREEN
+COLOR_UPLOAD = (30, 30, 0)   # YELLOW/ORANGE
 COLOR_BLE = (0, 0, 10)         # DIM BLUE
 COLOR_MAP = {
     'ERROR': COLOR_ERROR, 'SAVE': COLOR_SAVE, 'UPLOAD': COLOR_UPLOAD, 
@@ -133,7 +133,7 @@ def set_tactical_display(mode, status_line, progress, total_files, time_str, usa
 
     # Line 4: Progress / Info
     if mode == "UPLOAD":
-        oled.text(f"CHUNK {progress}/{total_files}", 0, 40, 1)
+        oled.text(f"File {progress}/{total_files}", 0, 40, 1)
     elif mode == "CRITICAL":
         oled.text("STORAGE TRAP", 0, 40, 1)
     else: 

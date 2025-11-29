@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------------------------------
 # PROJECT: ZIGGY CORE LOGIC (V4.1.3 - STABILITY GOLD MASTER)
-VERSION='4.1.3'
+VERSION='4.2.0'
 # HARDWARE: Abstraction Layer. Designed for Pico W (Tactical/Mini).
 # ---------------------------------------------------------------------------------------
 #
@@ -45,9 +45,9 @@ DEVICE_NAME = f"ZIGGY_{DEVICE_TYPE}_01"
 # --- LIMITS (Technoshed "Gold Master" Tuning) ---
 BLE_SCAN_DURATION = 5000        # 5 Seconds per scan tick
 LOOP_INTERVAL_S = 1             # Yield time between ticks
-UPLOAD_INTERVAL_S = 300         # 5 Minutes (Reduced gap for better resolution)
-MAX_FILE_SIZE_BYTES = 32 * 1024 # 32KB (Critical: Larger files cause ENOMEM during SSL)
-MAX_CHUNKS_PER_UPLOAD = 5       # 5 Files (Reduced from 10 to prevent Heap Fragmentation)
+UPLOAD_INTERVAL_S = 90         # 5 Minutes (Reduced gap for better resolution)
+MAX_FILE_SIZE_BYTES = 30 * 1024 # 30KB (Critical: Larger files cause ENOMEM during SSL)
+MAX_CHUNKS_PER_UPLOAD = 6       # 4 Files (Reduced from 10 to prevent Heap Fragmentation)
 STORAGE_CRITICAL_PCT = 0.80     # Stop scanning if > 80% full
 STORAGE_RESUME_PCT = 0.30       # Resume scanning only when < 30%
 LOG_DIR = "/logs"
@@ -397,12 +397,17 @@ async def run_upload_cycle(critical=False):
                 notify('ERROR', f"Server Error {r.status_code}") 
                 success = False
             r.close()
+            
         except Exception as e:
             sys.print_exception(e) # Print real error (Memory vs Network)
             set_unified_status("FAIL", "Net/SSL Fail", "RETRY", 0)
             notify('ERROR', "Network Failure") 
             success = False
-        
+            # --- MEMORY CLEANUP ---
+            del r           # Delete the object reference
+            del headers     # Delete the big dictionary
+            gc.collect()    # Force cleanup immediately
+            # ----------------------
         if not success: break
 
     # --- ENVIRONMENT LOGGING ---
