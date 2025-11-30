@@ -424,7 +424,7 @@ async def run_upload_cycle(critical=False):
                 except: ssid_str = "Unknown"
 
                 wifi_data = {"addr": bssid_hex, "id": ssid_str, "rssi": rssi, "channel": channel, "security": security}
-                append_log_entry('wifi', wifi_data)
+                append_log_entry('ble', wifi_data)
                 count += 1
             print(f"[WIFI] Logged {count} networks.")
         except Exception as e:
