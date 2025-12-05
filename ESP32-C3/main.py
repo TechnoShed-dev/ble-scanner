@@ -1,9 +1,10 @@
 # ---------------------------------------------------------------------------------------
-# ZIGGY MICRO APPLICATION - V2.0.0 (Smart Catch-Up)
+# ZIGGY MICRO APPLICATION - V2.2.0 (Boot & Blast)
 # ---------------------------------------------------------------------------------------
 # DEVICE:  ESP32-C3 (Ziggy Micro)
-# CHANGE:  Increased Batch Size to 5 to allow clearing backlogs.
-#          Added RAM checks inside the batch loop to prevent ENOMEM crashes.
+# CHANGE:  V2.2 - Added "Phase 0" Boot Upload.
+#          Checks for backlog immediately on startup while RAM is fresh and
+#          WiFi is likely still active from boot.py.
 # ---------------------------------------------------------------------------------------
 
 import uasyncio as asyncio
@@ -20,14 +21,14 @@ import os
 import errno
 
 # --- CONFIGURATION ---
-DEVICE_NAME = "ZIGGY_MICRO_01"
+DEVICE_NAME = "ZIGGY_MICRO_02"
 SCAN_DURATION_MS = 5000  
 UPLOAD_INTERVAL_S = 15 
   
 # CATCH-UP SETTINGS
-MAX_BATCH_FILES = 5      # Allow uploading 5 files per wake-up to clear backlog
-MIN_SAFE_RAM = 25000     # Abort batch if RAM drops below this
-MAX_STORED_FILES = 50    # Disk safety limit
+MAX_BATCH_FILES = 5      
+MIN_SAFE_RAM = 30000     # Increased safety buffer (was 25000)
+MAX_STORED_FILES = 50    
 MAX_CONSECUTIVE_FAILS = 5 
 
 # --- LED SETUP ---
@@ -152,8 +153,10 @@ def get_oldest_files(limit):
 
 def upload_single_file(filename):
     """Reads a file and uploads it. Returns True on success."""
-    gc.collect() 
+    # Aggressive GC before allocation
+    gc.collect()
     
+    csv_payload = None
     try:
         with open(filename, 'r') as f:
             csv_payload = f.read()
@@ -175,17 +178,25 @@ def upload_single_file(filename):
         'X-Pico-Device': filename,
         'CF-Access-Client-Id': secrets.CF_CLIENT_ID,
         'CF-Access-Client-Secret': secrets.CF_CLIENT_SECRET,
-        'User-Agent': 'Ziggy-Micro/2.0'
+        'User-Agent': 'Ziggy-Micro/2.2'
     }
 
     try:
         led.on()
         print(f"[Upload] Sending {filename} ({len(csv_payload)}b)...")
+        
+        # GC again right before the heavy SSL handshake
+        gc.collect() 
+        
         response = requests.post(secrets.SERVER_URL, headers=headers, data=csv_payload, timeout=20)
         led.off()
         
         status = response.status_code
         response.close() 
+        
+        # Clear the payload from RAM immediately
+        csv_payload = None
+        gc.collect()
         
         if status == 200:
             print(f"[Upload] Success")
@@ -197,7 +208,7 @@ def upload_single_file(filename):
     except OSError as e:
         led.off()
         if e.errno == errno.ENOMEM:
-            print("[Upload] Error: ENOMEM")
+            print("[Upload] Error: ENOMEM (RAM Exhausted)")
         else:
             print(f"[Upload] Network Error: {e}")
         return False
@@ -207,7 +218,37 @@ def upload_single_file(filename):
         return False
 
 async def scan_and_upload_loop():
-    print("[ZiggyMicro] Starting V2.0 Smart Catch-Up...")
+    print("[ZiggyMicro] Starting V2.2 (Boot & Blast)...")
+    
+    # --- PHASE 0: BOOT BACKLOG CLEAR ---
+    # Try to upload immediately using the fresh RAM and connection from boot.py
+    # We do NOT run the disconnect_wifi() here initially.
+    print("[System] Checking backlog on boot...")
+    if get_oldest_files(MAX_BATCH_FILES):
+        print("[System] Backlog found. Using boot connection to upload...")
+        
+        # We reuse the connection if possible. 
+        # If boot.py failed but this runs, connect_smart_wifi will try again.
+        if await connect_smart_wifi():
+            pending_files = get_oldest_files(MAX_BATCH_FILES)
+            for filename in pending_files:
+                if gc.mem_free() < MIN_SAFE_RAM:
+                    print(f"[System] Low RAM ({gc.mem_free()}). Stopping boot batch.")
+                    break
+                
+                if upload_single_file(filename):
+                     print(f"[Storage] Deleting {filename}")
+                     try: os.remove(filename)
+                     except: pass
+                else:
+                    print("[System] Boot Upload Error. Stopping.")
+                    break
+                gc.collect()
+                time.sleep(1)
+        else:
+            print("[System] Boot Connect Failed.")
+
+    # NOW we disconnect to ensure radio silence for the first scan
     disconnect_wifi()
     
     fail_count = 0
@@ -235,11 +276,8 @@ async def scan_and_upload_loop():
                                  uuid_part = binascii.hexlify(payload[start+2:start+10]).decode()
                                  dev_id = f"iBeacon_{uuid_part}"
                              except: dev_id = "iBeacon_Malformed"
-                        elif b'\x10\x05' in payload: dev_id = "Apple_Nearby"
-                        else: dev_id = "Apple_Device"
-                    elif b'\xff\x06\x00' in payload:
-                        security = "MS_Windows"
-                        dev_id = "Windows_Device"
+                        elif b'\x10\x05' in payload: dev_id = "GENERIC"
+                        else: dev_id = "GENERIC"
                     elif b'\x6f\xfd' in payload:
                           security = "Exposure_Notif"
                           dev_id = "Contact_Trace"
@@ -270,6 +308,18 @@ async def scan_and_upload_loop():
         else:
             print("[Scanner] No Named Devices.")
 
+        # --- MEMORY CLEANUP (CRITICAL) ---
+        # We must clear the scan results from RAM before we try to start WiFi SSL
+        del found_devices 
+        found_devices = None
+        gc.collect()
+        
+        # --- RADIO SWAP (CRITICAL) ---
+        # Kill Bluetooth to free up the shared radio RAM for WiFi/SSL
+        if bluetooth.BLE().active():
+            print("[System] Killing BLE to free RAM...")
+            bluetooth.BLE().active(False)
+        
         # --- PHASE 3: CATCH-UP UPLOAD ---
         # Get up to 5 files to clear backlog
         pending_files = get_oldest_files(MAX_BATCH_FILES)
@@ -281,8 +331,6 @@ async def scan_and_upload_loop():
                 for filename in pending_files:
                     
                     # 1. Check RAM before EVERY upload
-                    # If RAM is low, we stop the batch early to prevent a crash.
-                    # We will catch up on the next cycle.
                     if gc.mem_free() < MIN_SAFE_RAM:
                         print(f"[System] Low RAM ({gc.mem_free()}). Stopping batch.")
                         break 

@@ -3,6 +3,7 @@ config_credentials.py
 .env
 *.key
 *.pem
+secrets.py
 
 # --- Data & Logs (Do NOT commit these) ---
 *.csv

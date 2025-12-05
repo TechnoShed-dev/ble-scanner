@@ -1,10 +1,10 @@
 # ---------------------------------------------------------------------------------------
-# ZIGGY MICRO BOOTLOADER - V2.1.0 (Time Gatekeeper)
+# ZIGGY MICRO BOOTLOADER - V2.2.0 (Smart Network + Time Gatekeeper)
 # ---------------------------------------------------------------------------------------
 # DEVICE:  ESP32-C3 (Ziggy Micro)
-# PURPOSE: Network Initialization & Strict NTP Time Sync
+# PURPOSE: Multi-SSID Scanning & Strict NTP Time Sync
 # AUTHOR:  Karl (TechnoShed)
-# DATE:    04-12-2025
+# DATE:    05-12-2025
 # ---------------------------------------------------------------------------------------
 
 import network
@@ -32,9 +32,43 @@ def do_connect():
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     
-    if not wlan.isconnected():
-        print(f'[Boot] Connecting to {secrets.SSID}...')
-        wlan.connect(secrets.SSID, secrets.PASS)
+    # Power management optimization (matches main.py)
+    try: wlan.config(pm=0xa11140)
+    except: pass
+    
+    if wlan.isconnected():
+        return True
+
+    print('[Boot] Scanning for Known Networks...')
+    target_net = None
+    
+    try:
+        # Standard Scan
+        scan_results = wlan.scan()
+        visible_ssids = []
+        
+        # Decode SSIDs safely
+        for result in scan_results:
+            try:
+                visible_ssids.append(result[0].decode())
+            except:
+                pass
+                
+        # Find priority match
+        # Iterates through your KNOWN_NETWORKS list from secrets.py
+        for net in secrets.KNOWN_NETWORKS:
+            if net['ssid'] in visible_ssids:
+                target_net = net
+                break
+                
+    except Exception as e:
+        print(f"[Boot] Scan Error: {e}")
+        return False
+
+    if target_net:
+        print(f"[Boot] Found match: {target_net['ssid']}")
+        print(f"[Boot] Connecting...")
+        wlan.connect(target_net['ssid'], target_net['pass'])
         
         # Wait for connection (15s timeout)
         for _ in range(15):
@@ -44,10 +78,7 @@ def do_connect():
                 return True
             time.sleep(1)
             
-    if wlan.isconnected():
-        return True
-    
-    print('[Boot] WiFi Failed.')
+    print('[Boot] Connection Failed or No Known Network.')
     return False
 
 def force_time_sync():
@@ -82,7 +113,7 @@ def force_time_sync():
 # MAIN BOOT LOGIC
 # ==========================================
 
-# 1. Connect to WiFi
+# 1. Connect to WiFi (Now Smart!)
 if do_connect():
     
     # 2. The Time Trap
